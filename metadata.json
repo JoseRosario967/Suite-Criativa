@@ -1,0 +1,5 @@
+{
+  "name": "Gerador e Editor de Imagens AI",
+  "description": "Uma aplicação web moderna para gerar novas imagens a partir de prompts de texto ou editar as existentes usando IA. Desenvolvido com a API Gemini do Google.",
+  "requestFramePermissions": []
+}
