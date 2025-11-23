@@ -107,6 +107,7 @@ const ImageDisplayComponent: React.FC<ImageDisplayProps> = ({ images, isLoading,
                 const transform = transforms[index] || { scale: 1, x: 0, y: 0 };
                 const isZoomed = transform.scale > 1;
                 const isDragging = !!dragging && dragging.index === index;
+                
                 return (
                 <div 
                     key={index} 
