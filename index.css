@@ -2,7 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Estilos globais para scrollbar bonita */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

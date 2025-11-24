@@ -1,382 +1,671 @@
 
-import React, { useState, useEffect, Component } from 'react';
-import { AppView, EditorInitialState, UploadedFile, Watermark, WatermarkSettings, SavedImage } from './types';
-import { GeneratorView } from './components/GeneratorView';
-import { EditorView } from './components/EditorView';
-import { PromptDiscoveryView } from './components/PromptDiscoveryView';
-import { TextEditorView } from './components/TextEditorView';
-import { BatchWatermarkView } from './components/BatchWatermarkView';
-import { LotteryView } from './components/LotteryView';
-import { MontageView } from './components/MontageView';
-import { WatermarkManager } from './components/WatermarkManager';
-import { GalleryModal } from './components/GalleryModal';
-import { BackupManager } from './components/BackupManager'; 
-import { PromptTemplatesPanel } from './components/PromptTemplatesPanel'; // Import Template Panel
+import React, { useState, useCallback, useMemo, useEffect, lazy, Suspense } from 'react';
+import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
-import { Dashboard } from './components/Dashboard';
-import { getAllWatermarks, saveWatermark, deleteWatermark } from './services/galleryService'; 
-import { Menu, AlertTriangle } from 'lucide-react';
+import { PromptInput } from './components/PromptInput';
+import { ImageUpload } from './components/ImageUpload';
+import { ImageDisplay } from './components/ImageDisplay';
+import { ErrorAlert } from './components/ErrorAlert';
+import { Spinner } from './components/Spinner';
+import { generateOrEditImage, generateWithMask } from './services/geminiService';
+import { applyWatermark } from './utils/imageUtils';
+import { useWatermarks } from './hooks/useWatermarks';
+import { usePromptTemplates } from './hooks/usePromptTemplates';
+import usePersistentState from './hooks/usePersistentState';
+import type { UploadedImage, HistoryItem, ActiveView, Watermark } from './types';
 
-interface ErrorBoundaryProps {
-  children?: React.ReactNode;
-}
+// Lazy-loaded components for code splitting
+const Dashboard = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
+const PromptDiscoverer = lazy(() => import('./components/PromptDiscoverer').then(m => ({ default: m.PromptDiscoverer })));
+const TextEditor = lazy(() => import('./components/TextEditor').then(m => ({ default: m.TextEditor })));
+const MontageStudio = lazy(() => import('./components/MontageStudio').then(m => ({ default: m.MontageStudio })));
+const RestorationStudio = lazy(() => import('./components/RestorationStudio').then(m => ({ default: m.RestorationStudio })));
+const EuromillionsStudio = lazy(() => import('./components/EuromillionsStudio').then(m => ({ default: m.EuromillionsStudio })));
+const VideoStudio = lazy(() => import('./components/VideoStudio').then(m => ({ default: m.VideoStudio })));
+const InteriorDesignStudio = lazy(() => import('./components/InteriorDesignStudio').then(m => ({ default: m.InteriorDesignStudio })));
+const PoetryStudio = lazy(() => import('./components/PoetryStudio').then(m => ({ default: m.PoetryStudio })));
+const BackgroundRemoverStudio = lazy(() => import('./components/BackgroundRemoverStudio').then(m => ({ default: m.BackgroundRemoverStudio })));
+const UpscalerStudio = lazy(() => import('./components/UpscalerStudio').then(m => ({ default: m.UpscalerStudio })));
+const TranscriptionStudio = lazy(() => import('./components/TranscriptionStudio').then(m => ({ default: m.TranscriptionStudio })));
+const PortraitStudio = lazy(() => import('./components/PortraitStudio').then(m => ({ default: m.PortraitStudio })));
+const MagicEraserStudio = lazy(() => import('./components/MagicEraserStudio').then(m => ({ default: m.MagicEraserStudio })));
+const TranslationStudio = lazy(() => import('./components/TranslationStudio').then(m => ({ default: m.TranslationStudio })));
+const ChefStudio = lazy(() => import('./components/ChefStudio').then(m => ({ default: m.ChefStudio })));
+const GardeningStudio = lazy(() => import('./components/GardeningStudio').then(m => ({ default: m.GardeningStudio })));
+const WeatherStudio = lazy(() => import('./components/WeatherStudio').then(m => ({ default: m.WeatherStudio })));
+const WatermarkManager = lazy(() => import('./components/WatermarkManager').then(m => ({ default: m.WatermarkManager })));
+const BatchWatermarker = lazy(() => import('./components/BatchWatermarker').then(m => ({ default: m.BatchWatermarker })));
+const Changelog = lazy(() => import('./components/Changelog').then(m => ({ default: m.Changelog })));
+const MaskEditor = lazy(() => import('./components/MaskEditor').then(m => ({ default: m.MaskEditor })));
+const AdvancedImageEditor = lazy(() => import('./components/AdvancedImageEditor').then(m => ({ default: m.AdvancedImageEditor })));
+const HistoryPanel = lazy(() => import('./components/HistoryPanel').then(m => ({ default: m.HistoryPanel })));
+const ApiKeyPanel = lazy(() => import('./components/ApiKeyPanel').then(m => ({ default: m.ApiKeyPanel })));
+const PromptTemplatesPanel = lazy(() => import('./components/PromptTemplatesPanel').then(m => ({ default: m.PromptTemplatesPanel })));
+const CreditStore = lazy(() => import('./components/CreditStore').then(m => ({ default: m.CreditStore })));
 
-interface ErrorBoundaryState {
-  hasError: boolean;
-  error: Error | null;
-}
 
-// Error Boundary Component to prevent white screen crashes
-class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState;
+const fileToUploadedImage = (file: File): Promise<UploadedImage> => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const dataUrl = reader.result as string;
+            const base64 = dataUrl.split(',')[1];
+            resolve({ id: crypto.randomUUID(), dataUrl, base64, mimeType: file.type });
+        };
+        reader.onerror = (error) => reject(error);
+    });
+};
 
-  constructor(props: ErrorBoundaryProps) {
-    super(props);
-    this.state = {
-      hasError: false,
-      error: null
+const dataUrlToUploadedImage = (dataUrl: string): UploadedImage => {
+    const [header, base64] = dataUrl.split(',');
+    const mimeType = header.match(/:(.*?);/)?.[1] || 'image/png';
+    return {
+        id: crypto.randomUUID(),
+        dataUrl,
+        base64,
+        mimeType
     };
-  }
+};
 
-  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
-    return { hasError: true, error };
-  }
+const LoadingFallback = () => (
+    <div className="flex justify-center items-center w-full h-full p-8">
+        <Spinner size="lg" />
+    </div>
+);
 
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error("Uncaught error:", error, errorInfo);
-  }
+const App: React.FC = () => {
+    // App State - Changed default to 'dashboard'
+    const [activeView, setActiveView] = useState<ActiveView>('dashboard');
+    const [isLoading, setIsLoading] = useState(false);
+    const [error, setError] = useState<string | null>(null);
 
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-8 text-center">
-            <div className="bg-red-500/10 p-4 rounded-full mb-4">
-                <AlertTriangle className="w-12 h-12 text-red-500" />
-            </div>
-            <h1 className="text-3xl font-bold mb-4">Ops! Algo correu mal.</h1>
-            <p className="text-slate-400 mb-8 max-w-md">
-                A aplicação encontrou um erro crítico e não conseguiu carregar. 
-            </p>
-            <div className="bg-slate-900 p-4 rounded border border-slate-800 text-left overflow-auto max-w-2xl w-full mb-8 max-h-48">
-                <p className="text-red-400 font-mono text-xs">{this.state.error?.message}</p>
-            </div>
-            <button 
-                onClick={() => {
-                    localStorage.clear(); 
-                    window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now();
-                }}
-                className="px-6 py-3 bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors font-medium"
-            >
-                Limpar Cache e Resetar
-            </button>
-        </div>
-      );
-    }
+    // Credit System
+    const [credits, setCredits] = usePersistentState<number>('credits', 10);
+    const [isCreditStoreOpen, setIsCreditStoreOpen] = useState(false);
 
-    return this.props.children;
-  }
-}
+    // Image & Prompt State
+    const [prompt, setPrompt] = usePersistentState('prompt', '');
+    const [negativePrompt, setNegativePrompt] = usePersistentState('negativePrompt', '');
+    const [generatedImages, setGeneratedImages] = usePersistentState<string[]>('generatedImages', []);
+    const [uploadedImages, setUploadedImages] = usePersistentState<UploadedImage[]>('uploadedImages', []);
+    
+    // Advanced Settings
+    const [quality, setQuality] = usePersistentState<'standard' | 'high'>('quality', 'standard');
+    const [aspectRatio, setAspectRatio] = usePersistentState('aspectRatio', '1:1');
+    const [personalApiKey, setPersonalApiKey] = usePersistentState<string>('personalApiKey', '');
 
-const AppContent: React.FC = () => {
-  const [currentView, setCurrentView] = useState<AppView>(AppView.DASHBOARD);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isWatermarkManagerOpen, setIsWatermarkManagerOpen] = useState(false);
-  const [isGalleryOpen, setIsGalleryOpen] = useState(false);
-  const [isBackupOpen, setIsBackupOpen] = useState(false);
-  const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false); // New State
-  
-  const [editorInitialState, setEditorInitialState] = useState<EditorInitialState | null>(null);
 
-  // Watermark Global State
-  const [watermarks, setWatermarks] = useState<Watermark[]>([]);
-  const [watermarkSettings, setWatermarkSettings] = useState<WatermarkSettings>({
-      activeWatermarkId: null,
-      opacity: 80,
-      position: 'bottom-right',
-      scale: 0.2,
-      isEnabled: false
-  });
+    // History with robust persistence
+    const [history, setHistory] = usePersistentState<HistoryItem[]>('generationHistory', []);
+    
+    // Custom Hooks
+    const { 
+        watermarks, activeWatermark, addWatermark, 
+        updateWatermark, deleteWatermark, setActiveWatermarkId, setWatermarks
+    } = useWatermarks();
+    const {
+        templates, addTemplate, updateTemplate, deleteTemplate,
+        reorderTemplate, sortTemplatesAlphabetically, setTemplates
+    } = usePromptTemplates();
+    
+    // UI State for Modals
+    const [isWatermarkEnabled, setIsWatermarkEnabled] = usePersistentState('isWatermarkEnabled', true);
+    const [isDiscovererOpen, setIsDiscovererOpen] = useState(false);
+    const [isWatermarkManagerOpen, setIsWatermarkManagerOpen] = useState(false);
+    const [isBatchWatermarkerOpen, setIsBatchWatermarkerOpen] = useState(false);
+    const [isChangelogOpen, setIsChangelogOpen] = useState(false);
+    const [isMaskEditorOpen, setIsMaskEditorOpen] = useState(false);
+    const [imageToMask, setImageToMask] = useState<string | null>(null);
+    const [maskEditorMode, setMaskEditorMode] = useState<'edit' | 'erase' | 'enhance'>('edit');
+    const [isAdvancedEditorOpen, setIsAdvancedEditorOpen] = useState(false);
+    const [imageToEdit, setImageToEdit] = useState<string | null>(null);
 
-  // INITIALIZATION: Load from DB + Migrate from LocalStorage
-  useEffect(() => {
-    const initData = async () => {
+
+    // New state for sidebar panels as modals
+    const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
+    const [isApiKeyPanelOpen, setIsApiKeyPanelOpen] = useState(false);
+    const [isPromptTemplatesPanelOpen, setIsPromptTemplatesPanelOpen] = useState(false);
+
+
+    const isEditing = useMemo(() => uploadedImages.length > 0, [uploadedImages]);
+    
+    // Backup and Restore
+    const getBackupData = useCallback(() => {
+        return {
+            history,
+            watermarks,
+            activeWatermarkId: activeWatermark?.id || null,
+            templates,
+        };
+    }, [history, watermarks, activeWatermark, templates]);
+
+    const loadBackupData = useCallback((data: any) => {
         try {
-            try {
-                const legacyCheck = localStorage.getItem('nexus_watermarks');
-                if (legacyCheck && legacyCheck.length > 4000000) { 
-                    console.warn("Legacy storage too large, clearing to prevent crash.");
-                    localStorage.removeItem('nexus_watermarks');
-                }
-            } catch (e) {
-                localStorage.removeItem('nexus_watermarks');
+            if (data.history && Array.isArray(data.history)) {
+                setHistory(data.history);
             }
-
-            const legacyCheck = localStorage.getItem('nexus_watermarks');
-            
-            let wms: Watermark[] = [];
-            try {
-                wms = await getAllWatermarks();
-            } catch (dbError) {
-                console.error("Failed to load watermarks from DB:", dbError);
+            if (data.watermarks && Array.isArray(data.watermarks)) {
+                setWatermarks(data.watermarks);
             }
-
-            if (legacyCheck) {
-                try {
-                    const parsed = JSON.parse(legacyCheck);
-                    if (Array.isArray(parsed) && parsed.length > 0) {
-                        console.log("Migrating watermarks from LocalStorage to IndexedDB...");
-                        for (const wm of parsed) {
-                            if (!wms.find(w => w.id === wm.id)) {
-                                await saveWatermark(wm);
-                            }
-                        }
-                        wms = await getAllWatermarks();
-                    }
-                } catch (e) { console.error("Migration failed", e); }
-                localStorage.removeItem('nexus_watermarks');
+            if (typeof data.activeWatermarkId === 'string' || data.activeWatermarkId === null) {
+                // Ensure the active watermark ID actually exists in the newly loaded watermarks
+                const wmExists = data.watermarks?.some((wm: Watermark) => wm.id === data.activeWatermarkId);
+                setActiveWatermarkId(wmExists ? data.activeWatermarkId : null);
             }
-
-            setWatermarks(wms);
-
-            const savedSettings = localStorage.getItem('nexus_watermark_settings');
-            if (savedSettings) {
-                setWatermarkSettings(JSON.parse(savedSettings));
+            if (data.templates && Array.isArray(data.templates)) {
+                setTemplates(data.templates);
             }
         } catch (e) {
-            console.error("Failed to initialize app data", e);
+            console.error("Failed to load backup data", e);
+            setError("Falha ao carregar os dados do backup. O ficheiro pode estar corrompido.");
+        }
+    }, [setHistory, setWatermarks, setActiveWatermarkId, setTemplates]);
+
+
+    // Handlers
+    const handleFiles = useCallback(async (files: FileList | null) => {
+        if (files && files.length > 0) {
+            try {
+                const imageFiles = Array.from(files).filter(file => file.type.startsWith('image/'));
+                
+                if (Array.from(files).length > 0 && imageFiles.length === 0) {
+                    setError("Apenas ficheiros de imagem são suportados. Por favor, tente novamente.");
+                    return;
+                }
+                if (imageFiles.length === 0) return;
+
+                const newImages = await Promise.all(
+                    imageFiles.map(fileToUploadedImage)
+                );
+                setUploadedImages(prev => [...prev, ...newImages]);
+                setGeneratedImages([]); // Limpa os resultados anteriores quando novas imagens são adicionadas
+            } catch (err) {
+                setError("Falha ao carregar uma ou mais imagens.");
+            }
+        }
+    }, [setUploadedImages, setGeneratedImages]);
+
+    const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        handleFiles(event.target.files);
+        // Limpa o valor do input para permitir selecionar o mesmo ficheiro novamente.
+        if(event.currentTarget) {
+            event.currentTarget.value = '';
         }
     };
 
-    const timer = setTimeout(() => {
-        initData();
-    }, 500);
+    const handleClearImage = (id: string) => {
+        setUploadedImages(prev => prev.filter(img => img.id !== id));
+    };
+
+    const handleClearAllImages = () => {
+        setUploadedImages([]);
+    };
+
+    const handleAddCredits = (amount: number) => {
+        setCredits(prev => prev + amount);
+    };
+
+    const handleSubmit = async () => {
+        if (!prompt.trim()) {
+            setError('Por favor, insira um prompt.');
+            return;
+        }
+
+        // Credit Check Logic
+        // If we are generating a NEW image (not editing), it costs 1 credit.
+        if (!isEditing) {
+            if (credits < 1) {
+                setIsCreditStoreOpen(true);
+                return;
+            }
+            setCredits(prev => prev - 1);
+        }
+
+        setIsLoading(true);
+        setError(null);
+        setGeneratedImages([]);
+
+        const options = {
+            aspectRatio,
+            negativePrompt,
+            quality
+        };
+
+        try {
+            if (isEditing) {
+                // Modo de Edição/Composição (múltiplas imagens, um resultado)
+                // FREE - No credit deduction
+                const imagePayload = uploadedImages.map(img => ({ base64: img.base64, mimeType: img.mimeType }));
+                const resultImage = await generateOrEditImage(prompt, imagePayload, options, personalApiKey);
+
+                let finalImage = resultImage;
+                if (isWatermarkEnabled && activeWatermark) {
+                    finalImage = await applyWatermark(resultImage, activeWatermark);
+                }
+                
+                setGeneratedImages([finalImage]);
+
+                const newHistoryItem: HistoryItem = {
+                    id: crypto.randomUUID(),
+                    prompt,
+                    imageUrl: finalImage,
+                    timestamp: Date.now(),
+                    originalImages: uploadedImages.map(img => img.dataUrl),
+                };
+                setHistory(prev => [newHistoryItem, ...prev.slice(0, 49)]);
+                
+                // Limpa as imagens de origem após uma edição bem-sucedida para redefinir o estado.
+                setUploadedImages([]);
+
+            } else {
+                // Modo de Geração (sem imagens de entrada)
+                // Costs 1 Credit (already deducted)
+                
+                // Agora usamos 'options' para passar configurações nativas ao Imagen 4
+                let resultImage = await generateOrEditImage(prompt, undefined, options, personalApiKey);
+                
+                if (isWatermarkEnabled && activeWatermark) {
+                    resultImage = await applyWatermark(resultImage, activeWatermark);
+                }
+
+                setGeneratedImages([resultImage]);
+                
+                const historyItem: HistoryItem = {
+                    id: crypto.randomUUID(),
+                    prompt,
+                    imageUrl: resultImage,
+                    timestamp: Date.now(),
+                };
+                setHistory(prev => [historyItem, ...prev.slice(0, 49)]);
+            }
+            
+        } catch (e: any) {
+            setError(e.message || "Ocorreu um erro desconhecido.");
+            // Refund credit on failure if it was a generation
+            if (!isEditing) {
+                setCredits(prev => prev + 1);
+            }
+        } finally {
+            setIsLoading(false);
+        }
+    };
     
-    return () => clearTimeout(timer);
-  }, []);
+    const handleAddToHistory = useCallback((prompt: string, imageUrl: string) => {
+        const historyItem: HistoryItem = {
+            id: crypto.randomUUID(),
+            prompt,
+            imageUrl,
+            timestamp: Date.now(),
+        };
+        setHistory(prev => [historyItem, ...prev.slice(0, 49)]);
+        // Return to generator view after adding to history? Or stay in studio?
+        // Let's keep user in studio but maybe show a toast? For now just add to history.
+    }, [setHistory]);
 
-  const handleAddWatermark = async (wm: Watermark) => {
-      try {
-          await saveWatermark(wm);
-          setWatermarks(prev => [...prev, wm]);
-      } catch (e) {
-          console.error("Failed to save watermark", e);
-          alert("Erro ao guardar marca d'água.");
-      }
-  };
-
-  const handleDeleteWatermark = async (id: string) => {
-      try {
-          await deleteWatermark(id);
-          setWatermarks(prev => prev.filter(w => w.id !== id));
-      } catch (e) {
-          console.error("Failed to delete watermark", e);
-      }
-  };
-
-  const updateWatermarkSettings = (newSettings: WatermarkSettings) => {
-      setWatermarkSettings(newSettings);
-      localStorage.setItem('nexus_watermark_settings', JSON.stringify(newSettings));
-  };
-
-  const handleApplyDiscovery = (file: UploadedFile, prompt: string) => {
-    setEditorInitialState({ image: file, prompt: prompt });
-    setCurrentView(AppView.EDITOR);
-  };
-
-  const handleQuickEdit = (imageUrl: string) => {
-      try {
-          const arr = imageUrl.split(',');
-          const mime = arr[0].match(/:(.*?);/)?.[1] || 'image/png';
-          const bstr = arr[1];
-
-          const fileData: UploadedFile = {
-              previewUrl: imageUrl,
-              base64Data: bstr,
-              mimeType: mime
-          };
-
-          setEditorInitialState({
-              image: fileData,
-              prompt: "" 
-          });
-          setCurrentView(AppView.EDITOR);
-
-      } catch (e) {
-          console.error("Failed to parse image for editing", e);
-      }
-  };
-
-  const handleEditFromGallery = (savedImage: SavedImage) => {
-      setIsGalleryOpen(false);
-      
-      const fileData: UploadedFile = {
-          previewUrl: `data:${savedImage.mimeType};base64,${savedImage.base64Data}`,
-          base64Data: savedImage.base64Data,
-          mimeType: savedImage.mimeType
-      };
-
-      setEditorInitialState({
-          image: fileData,
-          prompt: "" 
-      });
-      setCurrentView(AppView.EDITOR);
-  };
-
-  const getActiveWatermark = () => {
-      return watermarks.find(w => w.id === watermarkSettings.activeWatermarkId);
-  };
-
-  const renderView = () => {
-    switch (currentView) {
-      case AppView.GENERATOR:
-        return (
-            <GeneratorView 
-                watermarkSettings={watermarkSettings}
-                activeWatermark={getActiveWatermark()}
-                onToggleWatermark={(enabled) => updateWatermarkSettings({...watermarkSettings, isEnabled: enabled})}
-                onQuickEdit={handleQuickEdit}
-            />
-        );
-      case AppView.EDITOR:
-        return (
-            <EditorView 
-                initialState={editorInitialState} 
-                onClearInitialState={() => setEditorInitialState(null)}
-                watermarkSettings={watermarkSettings}
-                activeWatermark={getActiveWatermark()}
-                onToggleWatermark={(enabled) => updateWatermarkSettings({...watermarkSettings, isEnabled: enabled})}
-            />
-        );
-      case AppView.MONTAGE:
-        return <MontageView />;
-      case AppView.DISCOVERY:
-        return <PromptDiscoveryView onApplyPrompt={handleApplyDiscovery} />;
-      case AppView.TEXT_EDITOR:
-        return <TextEditorView />;
-      case AppView.BATCH_WATERMARK:
-        return (
-            <BatchWatermarkView 
-                activeWatermark={getActiveWatermark()}
-                settings={watermarkSettings}
-                onOpenManager={() => setIsWatermarkManagerOpen(true)}
-            />
-        );
-      case AppView.LOTTERY:
-        return <LotteryView />;
-      case AppView.DASHBOARD:
-      default:
-        return <Dashboard onNavigate={setCurrentView} />;
-    }
-  };
-
-  const getPageTitle = () => {
-    switch (currentView) {
-      case AppView.GENERATOR: return 'Gerador de Imagens';
-      case AppView.EDITOR: return 'Editor Mágico';
-      case AppView.MONTAGE: return 'Estúdio de Montagem';
-      case AppView.DISCOVERY: return 'Descobridor de Incentivos';
-      case AppView.TEXT_EDITOR: return 'Editor de Texto';
-      case AppView.BATCH_WATERMARK: return 'Marca d\'Água em Lote';
-      case AppView.LOTTERY: return 'Sorte & Magia';
-      case AppView.DASHBOARD: return 'Início';
-      default: return 'Nexus AI';
-    }
-  };
-
-  return (
-    <div className="min-h-screen bg-background text-slate-100 selection:bg-indigo-500/30 flex">
-      <Sidebar 
-        currentView={currentView} 
-        onChangeView={setCurrentView}
-        isOpen={isSidebarOpen}
-        onClose={() => setIsSidebarOpen(false)}
-        onOpenWatermarkManager={() => setIsWatermarkManagerOpen(true)}
-        onOpenGallery={() => setIsGalleryOpen(true)}
-        onOpenBackup={() => setIsBackupOpen(true)}
-        onOpenTemplateManager={() => setIsTemplateManagerOpen(true)}
-      />
-
-      <div className="flex-1 lg:ml-64 flex flex-col min-h-screen transition-all duration-300">
-        <header className="sticky top-0 z-30 backdrop-blur-md bg-background/80 border-b border-slate-800 h-16 px-4 md:px-8 flex items-center gap-4">
-          <button 
-            onClick={() => setIsSidebarOpen(true)}
-            className="lg:hidden p-2 -ml-2 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800"
-          >
-            <Menu className="w-6 h-6" />
-          </button>
-          
-          <h1 className="text-xl font-semibold text-white">
-            {getPageTitle()}
-          </h1>
-
-          <div className="ml-auto hidden md:block">
-              <button 
-                onClick={() => setIsGalleryOpen(true)}
-                className="text-sm font-medium text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                  Abrir Galeria
-              </button>
-          </div>
-        </header>
-
-        <main className="flex-1 p-4 md:p-8 overflow-x-hidden">
-          <div className="max-w-7xl mx-auto h-full">
-            {renderView()}
-          </div>
-        </main>
+    const handleSelectHistory = (item: HistoryItem) => {
+        setPrompt(item.prompt);
+        setGeneratedImages([item.imageUrl]);
         
-        <footer className="border-t border-slate-800 py-6 px-8">
-          <div className="max-w-7xl mx-auto text-center md:text-left text-slate-500 text-sm flex flex-col md:flex-row justify-between items-center gap-4">
-            <p>Nexus AI © 2024 - Desenvolvido com Google Gemini</p>
-            <div className="flex gap-4">
-              <span className="text-xs text-emerald-500/70">v7.0 (Auto-Recovery)</span>
-              <span className="hover:text-slate-300 cursor-pointer">Termos</span>
-              <span className="hover:text-slate-300 cursor-pointer">Privacidade</span>
-            </div>
-          </div>
-        </footer>
-      </div>
+        if (item.originalImages && item.originalImages.length > 0) {
+            const restoredImages = item.originalImages.map(dataUrlToUploadedImage);
+            setUploadedImages(restoredImages);
+        } else {
+            setUploadedImages([]);
+        }
+        setIsHistoryPanelOpen(false);
+        setActiveView('generator'); // Jump to generator when history is selected
+    };
+    
+    const handleDeleteHistory = (id: string) => {
+        setHistory(prev => prev.filter(item => item.id !== id));
+    };
 
-      {/* Modals */}
-      <WatermarkManager 
-        isOpen={isWatermarkManagerOpen}
-        onClose={() => setIsWatermarkManagerOpen(false)}
-        library={watermarks}
-        settings={watermarkSettings}
-        onAddWatermark={handleAddWatermark}
-        onDeleteWatermark={handleDeleteWatermark}
-        onUpdateSettings={updateWatermarkSettings}
-      />
+    const handleClearHistory = () => {
+        setHistory([]);
+    };
+    
+    const handleApplyDiscoveredPrompt = (discoveredPrompt: string, originalImg: UploadedImage) => {
+        setPrompt(discoveredPrompt);
+        setUploadedImages([originalImg]);
+        setGeneratedImages([]);
+        setIsDiscovererOpen(false);
+        setActiveView('generator');
+    };
+    
+    const handleSelectTemplate = (template: string) => {
+        if (template.includes('{prompt}')) {
+            setPrompt(template.replace('{prompt}', prompt));
+        } else {
+            setPrompt(template);
+        }
+        setIsPromptTemplatesPanelOpen(false); 
+    };
 
-      <GalleryModal 
-        isOpen={isGalleryOpen}
-        onClose={() => setIsGalleryOpen(false)}
-        onEditImage={handleEditFromGallery}
-      />
+    const handleRefineImage = useCallback((imageUrl: string) => {
+        setImageToEdit(imageUrl);
+        setIsAdvancedEditorOpen(true);
+    }, []);
+    
+    const handleAdvancedEditComplete = useCallback((originalUrl: string, newUrl: string) => {
+      setGeneratedImages(prev => prev.map(img => img === originalUrl ? newUrl : img));
+      
+      const newHistoryItem: HistoryItem = {
+          id: crypto.randomUUID(),
+          prompt: `(Edição Avançada)`,
+          imageUrl: newUrl,
+          timestamp: Date.now(),
+          originalImages: [originalUrl], 
+      };
+      setHistory(prev => [newHistoryItem, ...prev.slice(0, 49)]);
+      
+      setIsAdvancedEditorOpen(false);
+      setImageToEdit(null);
+    }, [setGeneratedImages, setHistory]);
 
-      <BackupManager
-        isOpen={isBackupOpen}
-        onClose={() => setIsBackupOpen(false)}
-      />
+    const handleOpenMaskEditor = useCallback((imageUrl: string, mode: 'edit' | 'erase' | 'enhance' = 'edit') => {
+        setImageToMask(imageUrl);
+        setMaskEditorMode(mode);
+        setIsMaskEditorOpen(true);
+    }, []);
 
-      <PromptTemplatesPanel 
-        isOpen={isTemplateManagerOpen}
-        onClose={() => setIsTemplateManagerOpen(false)}
-        onSelectTemplate={(content) => {
-            navigator.clipboard.writeText(content);
-            setIsTemplateManagerOpen(false);
-            // In a real app, we might want a toast notification here
-        }}
-      />
-    </div>
-  );
-};
+    const handleMaskedSubmit = useCallback(async (userPrompt: string, originalImage: UploadedImage, maskImage: UploadedImage) => {
+        setIsLoading(true);
+        setError(null);
+        setIsMaskEditorOpen(false);
+        setGeneratedImages([]);
+        setActiveView('generator'); // Force generator view to show result
 
-const App: React.FC = () => {
+        try {
+            let resultImage = await generateWithMask(userPrompt, originalImage, maskImage, personalApiKey);
+            
+            if (isWatermarkEnabled && activeWatermark) {
+                resultImage = await applyWatermark(resultImage, activeWatermark);
+            }
+
+            setGeneratedImages([resultImage]);
+
+            const newHistoryItem: HistoryItem = {
+                id: crypto.randomUUID(),
+                prompt: `(Edição com máscara) ${userPrompt}`,
+                imageUrl: resultImage,
+                timestamp: Date.now(),
+                originalImages: [originalImage.dataUrl],
+            };
+            setHistory(prev => [newHistoryItem, ...prev.slice(0, 49)]);
+            
+        } catch (e: any) {
+             setError(e.message || "Ocorreu um erro desconhecido durante a edição com máscara.");
+        } finally {
+            setIsLoading(false);
+            setImageToMask(null);
+        }
+    }, [activeWatermark, isWatermarkEnabled, personalApiKey, setGeneratedImages, setHistory]);
+
+    const renderView = () => {
+        const suspenseFallback = <LoadingFallback />;
+        switch (activeView) {
+            case 'dashboard':
+                return <Suspense fallback={suspenseFallback}><Dashboard setActiveView={setActiveView} /></Suspense>;
+            case 'generator':
+                return (
+                    <div className="flex flex-col lg:flex-row gap-8 w-full animate-fade-in">
+                        <Sidebar 
+                             onOpenHistory={() => setIsHistoryPanelOpen(true)}
+                             onOpenWatermarkSettings={() => setIsWatermarkManagerOpen(true)}
+                             onOpenPrompts={() => setIsPromptTemplatesPanelOpen(true)}
+                             onOpenApiKeySettings={() => setIsApiKeyPanelOpen(true)}
+                             getBackupData={getBackupData}
+                             loadBackupData={loadBackupData}
+                             isWatermarkEnabled={isWatermarkEnabled}
+                             setIsWatermarkEnabled={setIsWatermarkEnabled}
+                             activeWatermark={activeWatermark}
+                             quality={quality}
+                             setQuality={setQuality}
+                             aspectRatio={aspectRatio}
+                             setAspectRatio={setAspectRatio}
+                             negativePrompt={negativePrompt}
+                             setNegativePrompt={setNegativePrompt}
+                        />
+                        <div className="w-full lg:w-2/3 xl:w-3/4 flex flex-col gap-6">
+                            <div className="flex-grow min-h-0 flex items-center justify-center">
+                                <ImageDisplay 
+                                    images={generatedImages} 
+                                    isLoading={isLoading} 
+                                    onEditImage={handleRefineImage}
+                                    onEditWithMask={(url) => handleOpenMaskEditor(url, 'edit')}
+                                    setGeneratedImages={setGeneratedImages}
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <PromptInput 
+                                    prompt={prompt} 
+                                    setPrompt={setPrompt} 
+                                    onSubmit={handleSubmit} 
+                                    isLoading={isLoading}
+                                    isImageUploaded={uploadedImages.length > 0}
+                                    onClearPrompt={() => setPrompt('')}
+                                />
+                                <ImageUpload
+                                    uploadedImages={uploadedImages}
+                                    onFileChange={handleFileChange}
+                                    onFilesDrop={handleFiles}
+                                    onClearImage={handleClearImage}
+                                    onClearAllImages={handleClearAllImages}
+                                />
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'textEditor':
+                return <Suspense fallback={suspenseFallback}><TextEditor 
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                        /></Suspense>;
+            case 'montage':
+                return <Suspense fallback={suspenseFallback}><MontageStudio 
+                            onAddToHistory={handleAddToHistory} 
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'restoration':
+                return <Suspense fallback={suspenseFallback}><RestorationStudio 
+                            onAddToHistory={handleAddToHistory} 
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'interiorDesign':
+                return <Suspense fallback={suspenseFallback}><InteriorDesignStudio 
+                            onAddToHistory={handleAddToHistory} 
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'poetry':
+                return <Suspense fallback={suspenseFallback}><PoetryStudio 
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'backgroundRemover':
+                return <Suspense fallback={suspenseFallback}><BackgroundRemoverStudio
+                            onAddToHistory={handleAddToHistory}
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'upscaler':
+                return <Suspense fallback={suspenseFallback}><UpscalerStudio
+                            onAddToHistory={handleAddToHistory}
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+             case 'transcription':
+                return <Suspense fallback={suspenseFallback}><TranscriptionStudio
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'portrait':
+                return <Suspense fallback={suspenseFallback}><PortraitStudio
+                            onAddToHistory={handleAddToHistory}
+                            onClose={() => setActiveView('dashboard')}
+                            isWatermarkEnabled={isWatermarkEnabled}
+                            activeWatermark={activeWatermark}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'magicEraser':
+                return <Suspense fallback={suspenseFallback}><MagicEraserStudio
+                            onClose={() => setActiveView('dashboard')}
+                            onOpenMaskEditor={handleOpenMaskEditor}
+                        /></Suspense>;
+            case 'translator':
+                return <Suspense fallback={suspenseFallback}><TranslationStudio
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'chef':
+                return <Suspense fallback={suspenseFallback}><ChefStudio
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'gardening':
+                return <Suspense fallback={suspenseFallback}><GardeningStudio
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'weather':
+                return <Suspense fallback={suspenseFallback}><WeatherStudio
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            case 'euromillions':
+                return <Suspense fallback={suspenseFallback}><EuromillionsStudio onClose={() => setActiveView('dashboard')} /></Suspense>;
+            case 'video':
+                return <Suspense fallback={suspenseFallback}><VideoStudio 
+                            onClose={() => setActiveView('dashboard')}
+                            personalApiKey={personalApiKey}
+                        /></Suspense>;
+            default:
+                return null;
+        }
+    };
+
     return (
-        <ErrorBoundary>
-            <AppContent />
-        </ErrorBoundary>
+        <div className="bg-gray-900 text-gray-200 min-h-screen font-sans flex flex-col">
+            <Header 
+                activeView={activeView} 
+                setActiveView={setActiveView} 
+                onOpenDiscoverer={() => setIsDiscovererOpen(true)}
+                onOpenBatchWatermarker={() => setIsBatchWatermarkerOpen(true)}
+                onOpenChangelog={() => setIsChangelogOpen(true)}
+                credits={credits}
+                onOpenCreditStore={() => setIsCreditStoreOpen(true)}
+            />
+            <main className="container mx-auto p-4 md:p-8 flex-grow flex">
+                {error && <ErrorAlert message={error} onDismiss={() => setError(null)} />}
+                {renderView()}
+            </main>
+            
+            {/* Modals */}
+            <Suspense fallback={null}>
+                {isDiscovererOpen && (
+                    <PromptDiscoverer 
+                        isOpen={isDiscovererOpen} 
+                        onClose={() => setIsDiscovererOpen(false)}
+                        onApply={handleApplyDiscoveredPrompt}
+                        personalApiKey={personalApiKey}
+                    />
+                )}
+                {isWatermarkManagerOpen && (
+                    <WatermarkManager 
+                        isOpen={isWatermarkManagerOpen}
+                        onClose={() => setIsWatermarkManagerOpen(false)}
+                        watermarks={watermarks}
+                        activeWatermarkId={activeWatermark?.id || null}
+                        onAdd={addWatermark}
+                        onUpdate={updateWatermark}
+                        onDelete={deleteWatermark}
+                        onSetId={setActiveWatermarkId}
+                    />
+                )}
+                {isBatchWatermarkerOpen && (
+                    <BatchWatermarker
+                        isOpen={isBatchWatermarkerOpen}
+                        onClose={() => setIsBatchWatermarkerOpen(false)}
+                        activeWatermark={activeWatermark}
+                    />
+                )}
+                {isChangelogOpen && (
+                    <Changelog
+                        isOpen={isChangelogOpen}
+                        onClose={() => setIsChangelogOpen(false)}
+                    />
+                )}
+                {imageToMask && (
+                    <MaskEditor
+                        isOpen={isMaskEditorOpen}
+                        onClose={() => setIsMaskEditorOpen(false)}
+                        sourceImage={imageToMask}
+                        onSubmit={handleMaskedSubmit}
+                        initialMode={maskEditorMode}
+                    />
+                )}
+                {imageToEdit && (
+                    <AdvancedImageEditor
+                        isOpen={isAdvancedEditorOpen}
+                        onClose={() => setIsAdvancedEditorOpen(false)}
+                        imageSrc={imageToEdit}
+                        onApply={handleAdvancedEditComplete}
+                    />
+                )}
+                {isHistoryPanelOpen && (
+                    <HistoryPanel
+                        isOpen={isHistoryPanelOpen}
+                        onClose={() => setIsHistoryPanelOpen(false)}
+                        history={history}
+                        onSelect={handleSelectHistory}
+                        onDelete={handleDeleteHistory}
+                        onClear={handleClearHistory}
+                    />
+                )}
+                {isApiKeyPanelOpen && (
+                    <ApiKeyPanel
+                        isOpen={isApiKeyPanelOpen}
+                        onClose={() => setIsApiKeyPanelOpen(false)}
+                        personalApiKey={personalApiKey}
+                        setPersonalApiKey={setPersonalApiKey}
+                    />
+                )}
+                {isPromptTemplatesPanelOpen && (
+                    <PromptTemplatesPanel
+                        isOpen={isPromptTemplatesPanelOpen}
+                        onClose={() => setIsPromptTemplatesPanelOpen(false)}
+                        templates={templates}
+                        onSelect={handleSelectTemplate}
+                        onAdd={addTemplate}
+                        onUpdate={updateTemplate}
+                        onDelete={deleteTemplate}
+                        onReorder={reorderTemplate}
+                        onSortAlphabetically={sortTemplatesAlphabetically}
+                    />
+                )}
+                {isCreditStoreOpen && (
+                    <CreditStore
+                        isOpen={isCreditStoreOpen}
+                        onClose={() => setIsCreditStoreOpen(false)}
+                        onAddCredits={handleAddCredits}
+                    />
+                )}
+            </Suspense>
+        </div>
     );
 };
 

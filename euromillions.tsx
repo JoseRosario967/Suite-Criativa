@@ -5,7 +5,7 @@ import { EuromillionsStudio } from './components/EuromillionsStudio';
 const App: React.FC = () => {
     return (
         <div className="bg-gray-900 text-gray-200 min-h-screen font-sans flex items-center justify-center p-4">
-            <EuromillionsStudio />
+            <EuromillionsStudio onClose={() => {}} />
         </div>
     );
 };

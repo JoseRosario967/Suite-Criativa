@@ -1,80 +1,58 @@
-import { useState, useEffect } from 'react';
-import { PromptTemplate } from '../types';
+import { useCallback } from 'react';
+import type { PromptTemplate } from '../types';
+import usePersistentState from './usePersistentState';
 
-const STORAGE_KEY = 'nexus_prompt_templates';
+const defaultTemplates: PromptTemplate[] = [
+    { id: '1', name: 'Fotorrealista', template: 'fotografia fotorrealista de {prompt}, 8k, detalhada' },
+    { id: '2', name: 'Arte Pixel', template: 'arte pixel de {prompt}, 16-bit, cores vibrantes' },
+    { id: '3', name: 'Aquarela', template: 'pintura em aquarela de {prompt}, suave, cores misturadas' },
+];
 
 export const usePromptTemplates = () => {
-  const [templates, setTemplates] = useState<PromptTemplate[]>([]);
+    const [templates, setTemplates] = usePersistentState<PromptTemplate[]>('promptTemplates', defaultTemplates);
 
-  // Load from storage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setTemplates(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse templates", e);
-      }
-    } else {
-      // Default templates for new users
-      const defaults: PromptTemplate[] = [
-        { id: '1', name: 'Realismo Cinematográfico', template: '{prompt}, cinematic lighting, 8k resolution, photorealistic, highly detailed, shot on 35mm lens, depth of field' },
-        { id: '2', name: 'Estilo Anime', template: '{prompt}, anime style, studio ghibli, vibrant colors, detailed background, cell shaded' },
-        { id: '3', name: 'Pintura a Óleo', template: 'oil painting of {prompt}, textured brushstrokes, classical art style, dramatic lighting' }
-      ];
-      setTemplates(defaults);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(defaults));
-    }
-  }, []);
+    const addTemplate = useCallback((name: string, template: string) => {
+        const newTemplate: PromptTemplate = { id: crypto.randomUUID(), name, template };
+        setTemplates(prev => [...prev, newTemplate]);
+    }, [setTemplates]);
 
-  // Save to storage whenever templates change
-  const save = (newTemplates: PromptTemplate[]) => {
-    setTemplates(newTemplates);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newTemplates));
-  };
+    const updateTemplate = useCallback((id: string, updates: Partial<Omit<PromptTemplate, 'id'>>) => {
+        setTemplates(prev => prev.map(t => t.id === id ? { ...t, ...updates } : t));
+    }, [setTemplates]);
 
-  const addTemplate = (name: string, templateContent: string) => {
-    const newTemplate: PromptTemplate = {
-      id: Date.now().toString(),
-      name,
-      template: templateContent
+    const deleteTemplate = useCallback((id: string) => {
+        setTemplates(prev => prev.filter(t => t.id !== id));
+    }, [setTemplates]);
+
+    const reorderTemplate = useCallback((id: string, direction: 'up' | 'down') => {
+        setTemplates(prev => {
+            const index = prev.findIndex(t => t.id === id);
+            if (index === -1) return prev;
+
+            const newTemplates = [...prev];
+            if (direction === 'up' && index > 0) {
+                [newTemplates[index - 1], newTemplates[index]] = [newTemplates[index], newTemplates[index - 1]];
+            } else if (direction === 'down' && index < newTemplates.length - 1) {
+                [newTemplates[index + 1], newTemplates[index]] = [newTemplates[index], newTemplates[index + 1]];
+            }
+            return newTemplates;
+        });
+    }, [setTemplates]);
+
+    const sortTemplatesAlphabetically = useCallback(() => {
+        setTemplates(prev => {
+            const sorted = [...prev].sort((a, b) => a.name.localeCompare(b.name, 'pt-BR', { sensitivity: 'base' }));
+            return sorted;
+        });
+    }, [setTemplates]);
+
+    return {
+        templates,
+        addTemplate,
+        updateTemplate,
+        deleteTemplate,
+        reorderTemplate,
+        sortTemplatesAlphabetically,
+        setTemplates, // For backup/restore
     };
-    save([...templates, newTemplate]);
-  };
-
-  const updateTemplate = (id: string, updates: Partial<PromptTemplate>) => {
-    const updated = templates.map(t => t.id === id ? { ...t, ...updates } : t);
-    save(updated);
-  };
-
-  const deleteTemplate = (id: string) => {
-    save(templates.filter(t => t.id !== id));
-  };
-
-  const moveTemplate = (id: string, direction: 'up' | 'down') => {
-    const index = templates.findIndex(t => t.id === id);
-    if (index === -1) return;
-
-    const newTemplates = [...templates];
-    if (direction === 'up' && index > 0) {
-      [newTemplates[index], newTemplates[index - 1]] = [newTemplates[index - 1], newTemplates[index]];
-    } else if (direction === 'down' && index < templates.length - 1) {
-      [newTemplates[index], newTemplates[index + 1]] = [newTemplates[index + 1], newTemplates[index]];
-    }
-    save(newTemplates);
-  };
-
-  const sortTemplatesAlphabetically = () => {
-    const sorted = [...templates].sort((a, b) => a.name.localeCompare(b.name));
-    save(sorted);
-  };
-
-  return {
-    templates,
-    addTemplate,
-    updateTemplate,
-    deleteTemplate,
-    moveTemplate,
-    sortTemplatesAlphabetically
-  };
 };
