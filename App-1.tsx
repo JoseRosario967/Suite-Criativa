@@ -28,17 +28,11 @@ const BackgroundRemoverStudio = lazy(() => import('./components/BackgroundRemove
 const UpscalerStudio = lazy(() => import('./components/UpscalerStudio').then(m => ({ default: m.UpscalerStudio })));
 const TranscriptionStudio = lazy(() => import('./components/TranscriptionStudio').then(m => ({ default: m.TranscriptionStudio })));
 const PortraitStudio = lazy(() => import('./components/PortraitStudio').then(m => ({ default: m.PortraitStudio })));
-// MagicEraserStudio removed
+const MagicEraserStudio = lazy(() => import('./components/MagicEraserStudio').then(m => ({ default: m.MagicEraserStudio })));
 const TranslationStudio = lazy(() => import('./components/TranslationStudio').then(m => ({ default: m.TranslationStudio })));
 const ChefStudio = lazy(() => import('./components/ChefStudio').then(m => ({ default: m.ChefStudio })));
 const GardeningStudio = lazy(() => import('./components/GardeningStudio').then(m => ({ default: m.GardeningStudio })));
 const WeatherStudio = lazy(() => import('./components/WeatherStudio').then(m => ({ default: m.WeatherStudio })));
-const DecipherStudio = lazy(() => import('./components/DecipherStudio').then(m => ({ default: m.DecipherStudio })));
-const MotionStudio = lazy(() => import('./components/MotionStudio').then(m => ({ default: m.MotionStudio })));
-const OpacityStudio = lazy(() => import('./components/OpacityStudio').then(m => ({ default: m.OpacityStudio })));
-const AnatomyStudio = lazy(() => import('./components/AnatomyStudio').then(m => ({ default: m.AnatomyStudio })));
-const VectorStudio = lazy(() => import('./components/VectorStudio').then(m => ({ default: m.VectorStudio })));
-const ThreeDStudio = lazy(() => import('./components/ThreeDStudio').then(m => ({ default: m.ThreeDStudio })));
 const WatermarkManager = lazy(() => import('./components/WatermarkManager').then(m => ({ default: m.WatermarkManager })));
 const BatchWatermarker = lazy(() => import('./components/BatchWatermarker').then(m => ({ default: m.BatchWatermarker })));
 const Changelog = lazy(() => import('./components/Changelog').then(m => ({ default: m.Changelog })));
@@ -528,8 +522,10 @@ const App: React.FC = () => {
                             personalApiKey={personalApiKey}
                         /></Suspense>;
             case 'magicEraser':
-                // Removed
-                return <Suspense fallback={suspenseFallback}><Dashboard setActiveView={setActiveView} /></Suspense>;
+                return <Suspense fallback={suspenseFallback}><MagicEraserStudio
+                            onClose={() => setActiveView('dashboard')}
+                            onOpenMaskEditor={handleOpenMaskEditor}
+                        /></Suspense>;
             case 'translator':
                 return <Suspense fallback={suspenseFallback}><TranslationStudio
                             onClose={() => setActiveView('dashboard')}
@@ -544,20 +540,11 @@ const App: React.FC = () => {
                 return <Suspense fallback={suspenseFallback}><GardeningStudio
                             onClose={() => setActiveView('dashboard')}
                             personalApiKey={personalApiKey}
-                            activeWatermark={activeWatermark}
-                            isWatermarkEnabled={isWatermarkEnabled}
                         /></Suspense>;
             case 'weather':
                 return <Suspense fallback={suspenseFallback}><WeatherStudio
                             onClose={() => setActiveView('dashboard')}
                             personalApiKey={personalApiKey}
-                        /></Suspense>;
-            case 'decipher':
-                return <Suspense fallback={suspenseFallback}><DecipherStudio
-                            onClose={() => setActiveView('dashboard')}
-                            personalApiKey={personalApiKey}
-                            activeWatermark={activeWatermark}
-                            isWatermarkEnabled={isWatermarkEnabled}
                         /></Suspense>;
             case 'euromillions':
                 return <Suspense fallback={suspenseFallback}><EuromillionsStudio onClose={() => setActiveView('dashboard')} /></Suspense>;
@@ -565,33 +552,6 @@ const App: React.FC = () => {
                 return <Suspense fallback={suspenseFallback}><VideoStudio 
                             onClose={() => setActiveView('dashboard')}
                             personalApiKey={personalApiKey}
-                        /></Suspense>;
-            case 'motion':
-                return <Suspense fallback={suspenseFallback}><MotionStudio 
-                            onClose={() => setActiveView('dashboard')}
-                        /></Suspense>;
-            case 'opacity':
-                return <Suspense fallback={suspenseFallback}><OpacityStudio 
-                            onClose={() => setActiveView('dashboard')}
-                        /></Suspense>;
-            case 'anatomy':
-                return <Suspense fallback={suspenseFallback}><AnatomyStudio
-                            onClose={() => setActiveView('dashboard')}
-                            personalApiKey={personalApiKey}
-                            activeWatermark={activeWatermark}
-                            isWatermarkEnabled={isWatermarkEnabled}
-                        /></Suspense>;
-            case 'vector':
-                return <Suspense fallback={suspenseFallback}><VectorStudio
-                            onClose={() => setActiveView('dashboard')}
-                            personalApiKey={personalApiKey}
-                        /></Suspense>;
-            case 'threeD':
-                return <Suspense fallback={suspenseFallback}><ThreeDStudio
-                            onClose={() => setActiveView('dashboard')}
-                            personalApiKey={personalApiKey}
-                            activeWatermark={activeWatermark}
-                            isWatermarkEnabled={isWatermarkEnabled}
                         /></Suspense>;
             default:
                 return null;

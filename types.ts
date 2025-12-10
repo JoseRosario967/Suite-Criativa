@@ -1,4 +1,5 @@
 
+
 export interface UploadedImage {
   id: string;
   dataUrl: string;
@@ -28,7 +29,7 @@ export interface HistoryItem {
     originalImages?: string[]; // dataUrls of the original images if it was an edit
 }
 
-export type ActiveView = 'dashboard' | 'generator' | 'textEditor' | 'montage' | 'restoration' | 'maskEditor' | 'euromillions' | 'video' | 'interiorDesign' | 'poetry' | 'backgroundRemover' | 'upscaler' | 'transcription' | 'portrait' | 'magicEraser' | 'translator' | 'chef' | 'gardening' | 'weather';
+export type ActiveView = 'dashboard' | 'generator' | 'textEditor' | 'montage' | 'restoration' | 'maskEditor' | 'euromillions' | 'video' | 'interiorDesign' | 'poetry' | 'backgroundRemover' | 'upscaler' | 'transcription' | 'portrait' | 'magicEraser' | 'translator' | 'chef' | 'gardening' | 'weather' | 'decipher' | 'motion' | 'opacity' | 'anatomy' | 'vector' | 'threeD';
 
 export interface PromptTemplate {
     id: string;
